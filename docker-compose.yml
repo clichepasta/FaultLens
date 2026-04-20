@@ -1,0 +1,138 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - faultlens-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - faultlens-network
+
+  kafka-init-topics:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka-init-topics
+    depends_on:
+      - kafka
+    command: "bash -c 'echo Waiting for Kafka to be ready... && \
+             cub kafka-ready -b kafka:9092 1 30 && \
+             kafka-topics --create --topic error-logs --partitions 1 --replication-factor 1 --if-not-exists --bootstrap-server kafka:9092'"
+    networks:
+      - faultlens-network
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.4
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    networks:
+      - faultlens-network
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.10.4
+    container_name: logstash
+    volumes:
+      - ./logstash/pipeline.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+      - ./logstash/template.json:/usr/share/logstash/templates/template.json:ro
+    environment:
+      - "LS_JAVA_OPTS=-Xms256m -Xmx256m"
+    depends_on:
+      - elasticsearch
+      - kafka
+    networks:
+      - faultlens-network
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.10.4
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    networks:
+      - faultlens-network
+
+  backend-api:
+    build: 
+      context: ./backend-api
+    container_name: backend-api
+    ports:
+      - "3000:3000"
+    environment:
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - PORT=3000
+    depends_on:
+      - elasticsearch
+    networks:
+      - faultlens-network
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+    container_name: auth-service
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+      - SERVICE_NAME=auth-service
+    depends_on:
+      - kafka
+    networks:
+      - faultlens-network
+
+  payment-service:
+    build:
+      context: ./services/payment-service
+    container_name: payment-service
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+      - SERVICE_NAME=payment-service
+    depends_on:
+      - kafka
+    networks:
+      - faultlens-network
+
+  order-service:
+    build:
+      context: ./services/order-service
+    container_name: order-service
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+      - SERVICE_NAME=order-service
+    depends_on:
+      - kafka
+    networks:
+      - faultlens-network
+
+networks:
+  faultlens-network:
+    driver: bridge
+
+volumes:
+  es_data:

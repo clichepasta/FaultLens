@@ -1,0 +1,18 @@
+{
+  "index_patterns": ["error-logs-*"],
+  "template": {
+    "mappings": {
+      "properties": {
+        "service": { "type": "keyword" },
+        "level": { "type": "keyword" },
+        "message": { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } } },
+        "timestamp": { "type": "date" },
+        "userId": { "type": "keyword" },
+        "requestId": { "type": "keyword" },
+        "env": { "type": "keyword" },
+        "stackTrace": { "type": "text" },
+        "messageHash": { "type": "keyword" }
+      }
+    }
+  }
+}
